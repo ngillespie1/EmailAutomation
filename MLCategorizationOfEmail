@@ -1,0 +1,215 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jul 01 14:02:03 2020
+
+@author: 
+"""
+
+import os
+#os.system('cls')  
+import win32com.client
+import time
+import shutil
+import re
+import pymsteams
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+import tensorflow as tf
+
+config = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=5,
+                         inter_op_parallelism_threads=5, 
+                         allow_soft_placement=True,
+                         device_count = {'CPU' : 1,
+                                         'GPU' : 0}
+                        )
+from utils import get_model, int2label, label2int
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+import pickle
+import numpy as np
+import psutil
+import subprocess
+import datetime
+from nltk.corpus import stopwords
+stoplist = stopwords.words('english')
+
+SEQUENCE_LENGTH = 100
+
+# get the tokenizer
+tokenizer = pickle.load(open("results/tokenizer.pickle", "rb"))
+
+model = get_model(tokenizer, 128)
+model.load_weights("results/spam_classifier_0.24.hdf5")
+
+def get_predictions(text):
+    sequence = tokenizer.texts_to_sequences([text])
+    # pad the sequence
+    sequence = pad_sequences(sequence, maxlen=SEQUENCE_LENGTH)
+    # get the prediction
+    prediction = model.predict(sequence)[0]
+    # one-hot encoded vector, revert using np.argmax
+    return int2label[np.argmax(prediction)]
+
+
+def open_outlook():
+    try:
+        subprocess.call(['C:\Program Files (x86)\Microsoft Office\Office16\Outlook.exe'])
+        os.system("C:\Program Files (x86)\Microsoft Office\Office16\Outlook.exe");
+    except:
+        print("Outlook didn't open successfully")
+
+tempFolder = r"C:\test\temp"
+
+if os.path.isdir(tempFolder):
+    print("Creating Folder")
+else:
+    print("The Temp Folder isn't there. Creating...")
+    os.mkdir(tempFolder)
+    print("Folder " + tempFolder + " created successfully ")
+
+phishFolder = r"C:\test\PhishingExtract"
+
+outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+
+#inbox = outlook.GetDefaultFolder(6)
+inbox = outlook.GetDefaultFolder(6)#.Folders['Inbox']
+phishing = outlook.GetDefaultFolder(6).Folders['Suspicious Email'].Folders['Phishing']
+nigelphishing = outlook.GetDefaultFolder(6).Folders['nigelphishingfolder']
+spam = outlook.GetDefaultFolder(6).Folders['Suspicious Email'].Folders['Spam']
+
+messages = inbox.Items
+message = messages.GetLast()
+
+#body_content = message.Body
+#subject = message.Subject
+#categories = message.Categories
+#ReporterEmail = message.Sender.GetExchangeUser().PrimarySmtpAddress
+#sender = message.Sender
+#attachments = message.Attachments
+
+ListenerCount = 1
+
+def OutlookListener():
+    spamCount = 0
+    phishCount = 0
+    MessageCount=len(messages)
+
+    print("Checking if Outlook is open")
+    time.sleep(2)
+    print("")
+    #EnsuringOutlookIsOpen
+    for item in psutil.pids():
+        p = psutil.Process(item)
+        if p.name() == "OUTLOOK.EXE":
+            flag = 1
+            break
+        else:
+            flag = 0
+    if (flag == 1):
+        print("Outlook is Open")
+        print("")
+
+    else:
+        open_outlook()
+        
+    if MessageCount > 0:
+        print(str(MessageCount) + " Messages to Review.")
+        for message in messages:
+            if '[SUSPICIOUS EMAIL]' in (message.Subject):
+                if message.Categories == '':
+                    print('Handling ' + message.Subject)
+                    time.sleep(0.5)
+                    for attachment in message.Attachments:
+                        attachment.FileName.encode("utf-8")
+                        attachment.SaveAsFile(tempFolder + '\\' + attachment.FileName)
+                        time.sleep(0.5)
+                        for file in os.listdir(tempFolder):
+                            if file.endswith(".msg"):
+                                outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+                                filePath = tempFolder  + '\\' + file
+                                msg = outlook.OpenSharedItem(filePath) 
+                                body = msg.body
+                                body = body.replace('\n', '').replace('\r','')
+                                ReporterEmail = message.Sender.GetExchangeUser().PrimarySmtpAddress
+                                sender = msg.SenderName
+                                senderemail = msg.SenderEmailAddress
+                                print(senderemail)
+                                del msg, outlook
+                                body = re.sub(r'(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'".,<>?«»“”‘’]))', '', body)
+                                body = (str(file) + " " + str(body))
+                                #   body = [word for word in body.split() if word not in stoplist]
+                                #   body = body[0:500]
+                                #   print(body)
+                                verdict = (get_predictions(body))
+                                
+                                if verdict == "ham":
+                                    print("Reported By: " + ReporterEmail)
+                                    print("")
+                                    print("I think this may be a Phishing Mail.")
+                                    myTeamsMessage = pymsteams.connectorcard("https://outlook.office.com/webhook/8b77cac8-a5a6-4d97-ac19-51afb70792da@8506c69f-005d-421b-b670-9a8ccd5aee63/IncomingWebhook/e08d147f92094f9bb5ff7a0bef759ed2/ac3901bf-3148-458d-93ab-580c8309e939")
+                                    myTeamsMessage.title("CSOC Malicious Alert")
+                                    myTeamsMessage.color("19bfff")
+                                    myTeamsMessage.text("Hey Guys, I think there may be a Malicious Email in the Report mailbox. Could someone take a look? It was reported by " + ReporterEmail + " and the email Subject is " + file)
+                                    myTeamsMessage.send()
+                                    message.Categories='Red category'
+                                    message.Save()
+                                    print("Message Category is changed to " + message.Categories)
+                                    print("")
+                                    phishCount +=1
+                                    print("")
+                                    print("----------------------------------------------------")
+                                    time.sleep(0.5)
+                                    shutil.rmtree(tempFolder)
+                                    os.mkdir(tempFolder)                                            
+                                else:
+                                    print("Reported By: " + ReporterEmail)
+                                    print("Message Category is " + message.Categories)
+                                    print("")
+                                    print("I think it's spam.")
+                                    message.Categories='Green category'
+                                    message.Save()
+                                    print("Message Category is changed to " + message.Categories)
+                                    print("")
+                                    #print("Sending Mail to User " + ReporterEmail + ' now.')
+                                    spamCount +=1
+                                    #      message.Move(spam)
+                                    print("")
+                                    print("----------------------------------------------------")
+                                    time.sleep(0.5)
+                                    shutil.rmtree(tempFolder)
+                                    os.mkdir(tempFolder)
+                
+                            else:
+                                print(file + " File isn't an MSG so can't check it")
+                                break                           
+                else:
+                    print("Message " + message.Subject + " has already been given a: " + message.Categories)
+                    
+            else:
+                print("The Message with subject " + message.Subject + " does not contain an attachment")
+                print("")
+                
+            
+    else:
+        print("There are no mails to review...")
+            
+while ListenerCount > 0:
+    print("")
+    print("----------------------------------------------------")                            
+    print("")
+    shutil.rmtree(tempFolder)
+    os.mkdir(tempFolder)
+    OutlookListener()
+    print("")
+    print("Checking Again in 30 Seconds")
+    print("")
+    time.sleep(30)
+    now = datetime.datetime.now()
+    print (now.strftime("%Y-%m-%d %H:%M:%S"))
+    print("")
+
+    
+
+
+
+
