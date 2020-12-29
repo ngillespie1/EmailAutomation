@@ -146,7 +146,7 @@ def OutlookListener():
                                     print("Reported By: " + ReporterEmail)
                                     print("")
                                     print("I think this may be a Phishing Mail.")
-                                    myTeamsMessage = pymsteams.connectorcard("https://outlook.office.com/webhook/8b77cac8-a5a6-4d97-ac19-51afb70792da@8506c69f-005d-421b-b670-9a8ccd5aee63/IncomingWebhook/e08d147f92094f9bb5ff7a0bef759ed2/ac3901bf-3148-458d-93ab-580c8309e939")
+                                    myTeamsMessage = pymsteams.connectorcard("webhookURL")
                                     myTeamsMessage.title("CSOC Malicious Alert")
                                     myTeamsMessage.color("19bfff")
                                     myTeamsMessage.text("Hey Guys, I think there may be a Malicious Email in the Report mailbox. Could someone take a look? It was reported by " + ReporterEmail + " and the email Subject is " + file)
